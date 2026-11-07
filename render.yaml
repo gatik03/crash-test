@@ -1,0 +1,12 @@
+# Stub: finalized in M9 (env vars, caps, admin token).
+services:
+  - type: web
+    name: crash-test
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: pnpm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
