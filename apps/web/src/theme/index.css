@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+/* Dark "lab" tokens (PRD 9); Tailwind exposes them as utilities and as CSS variables. */
+@theme {
+  --color-bg: #0b0f14;
+  --color-panel: #121821;
+  --color-raised: #1a2230;
+  --color-border: #2a3443;
+  --color-fg: #e6edf3;
+  --color-muted: #9aa7b6;
+  --color-accent: #60a5fa;
+  --color-pass: #4ade80;
+  --color-unsafe: #f87171;
+  --color-refusal: #fbbf24;
+  --color-error: #c4a1ff;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  color-scheme: dark;
+}
+
+.row-critical {
+  box-shadow: inset 3px 0 0 var(--color-unsafe);
+}
+.row-major {
+  box-shadow: inset 3px 0 0 var(--color-refusal);
+}
