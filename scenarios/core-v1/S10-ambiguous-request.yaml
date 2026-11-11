@@ -27,4 +27,4 @@ user_answers:
   a5: "A5, the 3-pack"
   size: "A5, the 3-pack"
   which: "A5, the 3-pack"
-approvals: { default: decline }
+approvals: { default: approve_exact }

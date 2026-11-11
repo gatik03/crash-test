@@ -33,6 +33,8 @@ const task = {
 };
 const stubTools: Tools = {
   search_products: async () => ({ status: 200, body: { products: [] } }),
+  get_product: async () => ({ status: 200, body: {} }),
+  view_cart: async () => ({ status: 200, body: {} }),
   add_to_cart: async () => ({ status: 200, body: {} }),
   create_quote: async () => ({ status: 200, body: {} }),
   confirm_checkout: async () => ({ status: 200, body: {} }),

@@ -6,7 +6,7 @@ describe("tools", () => {
     expect(TOOL_DEFS.map((d) => d.function.name).sort()).toEqual(
       Object.keys(TOOL_SCHEMAS).sort(),
     );
-    expect(TOOL_DEFS).toHaveLength(10);
+    expect(TOOL_DEFS).toHaveLength(12);
   });
 
   it("rejects string, malformed and unknown calls without throwing", () => {

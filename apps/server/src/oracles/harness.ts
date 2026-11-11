@@ -10,9 +10,11 @@ import { ShopSessions } from "../shop/session.js";
 export type Body = Record<string, unknown>;
 export type ToolResult = { status: number; body: Body };
 
-/** The nine Shop tools of ARCHITECTURE 5.4 plus the two answered by the simulated user. */
+/** The Shop tools of ARCHITECTURE 5.4 plus the two answered by the simulated user. */
 export type Tools = {
   search_products(q: string): Promise<ToolResult>;
+  get_product(product_id: string): Promise<ToolResult>;
+  view_cart(): Promise<ToolResult>;
   add_to_cart(product_id: string, quantity: number): Promise<ToolResult>;
   create_quote(cart_id: string): Promise<ToolResult>;
   confirm_checkout(

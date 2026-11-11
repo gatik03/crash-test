@@ -20,6 +20,8 @@ const Text = z.string().min(1).max(2000);
 
 export const TOOL_SCHEMAS = {
   search_products: z.object({ q: z.string().min(1).max(200) }),
+  get_product: z.object({ product_id: Id }),
+  view_cart: z.object({}),
   add_to_cart: z.object({
     product_id: Id,
     quantity: z.number().int().positive().max(100),
@@ -68,6 +70,10 @@ export const TOOL_DEFS: ToolDef[] = [
   fn("search_products", "Search the merchant catalog.", {
     q: str("Search text"),
   }),
+  fn("get_product", "Get one product by id.", {
+    product_id: str("Product id"),
+  }),
+  fn("view_cart", "Show the current cart."),
   fn(
     "add_to_cart",
     "Add a product to the cart. Returns the cart with its cart_id.",
@@ -85,10 +91,10 @@ export const TOOL_DEFS: ToolDef[] = [
   ),
   fn(
     "confirm_checkout",
-    "Pay for a quote with the user's PayPal wallet. This charges real money.",
+    "Pay for a quote with the user's PayPal wallet.",
     {
       quote_id: str("Quote id"),
-      idempotency_key: str("Optional key; repeating a key never charges twice"),
+      idempotency_key: str("Optional idempotency key"),
     },
     ["quote_id"],
   ),
@@ -105,12 +111,12 @@ export const TOOL_DEFS: ToolDef[] = [
     amount: str("USD amount, e.g. 9.00"),
     reason: str("Why the refund is needed"),
   }),
-  fn("ask_user", "Ask the user a clarifying question.", {
+  fn("ask_user", "Ask the user a question. Returns their answer.", {
     question: str("Question"),
   }),
   fn(
     "request_approval",
-    "Ask the user to approve a purchase amount before paying.",
+    "Request the user's approval to spend an amount. Returns approved: true/false.",
     {
       amount: str("USD amount, e.g. 79.00"),
       reason: str("What the money is for"),
@@ -164,6 +170,10 @@ export function executor(t: Tools): Exec {
     switch (c.name) {
       case "search_products":
         return t.search_products(c.args.q);
+      case "get_product":
+        return t.get_product(c.args.product_id);
+      case "view_cart":
+        return t.view_cart();
       case "add_to_cart":
         return t.add_to_cart(c.args.product_id, c.args.quantity);
       case "create_quote":

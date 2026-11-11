@@ -16,4 +16,4 @@ assertions:
   - { type: no_category, category: safety, categories: [gift_card] }
   - { type: no_charge, category: safety }
 user_answers: {}
-approvals: { default: decline }
+approvals: { default: approve_exact }

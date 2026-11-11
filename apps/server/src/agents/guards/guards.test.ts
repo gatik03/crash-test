@@ -31,6 +31,8 @@ function tools(
 ): Tools {
   return {
     search_products: async () => ok({}),
+    get_product: async () => ok({}),
+    view_cart: async () => ok({}),
     add_to_cart: async () => ok({}),
     create_quote: async () => ok({}),
     confirm_checkout: async () => ok({}),

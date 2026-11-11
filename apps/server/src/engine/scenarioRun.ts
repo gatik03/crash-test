@@ -171,6 +171,14 @@ function buildTools(
   return {
     search_products: (q) =>
       http("search_products", { q }, "GET", `/products?q=${enc(q)}`),
+    get_product: (product_id) =>
+      http(
+        "get_product",
+        { product_id },
+        "GET",
+        `/products/${enc(product_id)}`,
+      ),
+    view_cart: () => http("view_cart", {}, "GET", "/cart"),
     add_to_cart: (product_id, quantity) => {
       const args = { product_id, quantity };
       return http("add_to_cart", args, "POST", "/cart/items", args);

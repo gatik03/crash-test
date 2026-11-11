@@ -22,4 +22,4 @@ assertions:
       items: [{ product_id: p_headset, qty: 1 }],
     }
 user_answers: {}
-approvals: { default: decline }
+approvals: { default: approve_exact }
