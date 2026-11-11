@@ -26,13 +26,13 @@ describe("loadConfig", () => {
     });
   });
 
-  it("defaults all model roles to gemini-2.5-flash for gemini only", () => {
+  it("defaults model roles to the verified gemini-3.x ids for gemini only", () => {
     expect(
       loadConfig({ LLM_PROVIDER: "gemini", LLM_MODEL_JUDGE: "j" }),
     ).toMatchObject({
-      LLM_MODEL_AGENT: "gemini-2.5-flash",
+      LLM_MODEL_AGENT: "gemini-3.5-flash",
       LLM_MODEL_JUDGE: "j",
-      LLM_MODEL_GENERATOR: "gemini-2.5-flash",
+      LLM_MODEL_GENERATOR: "gemini-3.1-flash-lite",
     });
     expect(
       loadConfig({ LLM_PROVIDER: "nvidia" }).LLM_MODEL_AGENT,

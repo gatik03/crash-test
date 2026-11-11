@@ -42,6 +42,8 @@ export interface ChatRequest {
   tools?: ToolDef[];
   temperature?: number;
   maxTokens?: number;
+  /** Called with true before waiting on the shared rate limiter or a retry backoff, false when the request is sent; lets callers pause their timeouts. */
+  onQueue?: (queued: boolean) => void;
 }
 
 export interface ChatResult {

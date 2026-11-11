@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MemoryEventSink } from "../events/sink.js";
 import { loadConfig } from "../config.js";
 import { PayPalClient } from "./paypalClient.js";
@@ -175,31 +175,35 @@ describe.skipIf(!SANDBOX)(
   "PayPalSandboxRail (real sandbox)",
   { timeout: 60_000 },
   () => {
-    try {
-      process.loadEnvFile?.(); // .env at the repo root (vitest's cwd); never overrides set vars
-    } catch {
-      // No .env: rely on the process environment.
-    }
-    const config = loadConfig({
-      ...process.env,
-      PAYPAL_RAIL: "paypal-sandbox",
-    });
-    const client = new PayPalClient({
-      clientId: config.PAYPAL_CLIENT_ID ?? "",
-      clientSecret: config.PAYPAL_CLIENT_SECRET ?? "",
-    });
-    const rail = new PayPalSandboxRail({
-      client,
-      vaultId: config.WALLET_VAULT_ID ?? "",
-      sink: new MemoryEventSink(),
-    });
+    // Built in beforeAll: collection runs even when skipped, and loadConfig throws without .env.
+    let rail: PayPalSandboxRail;
     const captured = new Set<string>();
-    const charge = rail.charge.bind(rail);
-    rail.charge = async (req) => {
-      const res = await charge(req);
-      if (res.captureId) captured.add(res.captureId);
-      return res;
-    };
+    beforeAll(() => {
+      try {
+        process.loadEnvFile?.(); // .env at the repo root (vitest's cwd); never overrides set vars
+      } catch {
+        // No .env: rely on the process environment.
+      }
+      const config = loadConfig({
+        ...process.env,
+        PAYPAL_RAIL: "paypal-sandbox",
+      });
+      const client = new PayPalClient({
+        clientId: config.PAYPAL_CLIENT_ID ?? "",
+        clientSecret: config.PAYPAL_CLIENT_SECRET ?? "",
+      });
+      rail = new PayPalSandboxRail({
+        client,
+        vaultId: config.WALLET_VAULT_ID ?? "",
+        sink: new MemoryEventSink(),
+      });
+      const charge = rail.charge.bind(rail);
+      rail.charge = async (req) => {
+        const res = await charge(req);
+        if (res.captureId) captured.add(res.captureId);
+        return res;
+      };
+    });
 
     railContract(() => rail);
 

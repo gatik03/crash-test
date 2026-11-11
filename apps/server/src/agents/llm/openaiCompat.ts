@@ -192,7 +192,9 @@ export function createOpenAICompatClient(opts: OpenAICompatOptions): LLMClient {
         ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
       });
       for (let attempt = 0; ; attempt++) {
+        req.onQueue?.(true);
         await limiter.acquire();
+        req.onQueue?.(false);
         let res: Response | undefined;
         let failure = "";
         try {
@@ -222,6 +224,7 @@ export function createOpenAICompatClient(opts: OpenAICompatOptions): LLMClient {
             status,
           );
         }
+        req.onQueue?.(true);
         await sleep(
           retryAfterMs(res?.headers.get("retry-after") ?? null) ??
             Math.min(30_000, 1000 * 2 ** attempt) * (0.5 + random() / 2),

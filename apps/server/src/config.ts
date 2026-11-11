@@ -49,12 +49,15 @@ const Env = z
   })
   .transform((e) => {
     // Model ids default only for gemini; other providers must name theirs.
-    const d = e.LLM_PROVIDER === "gemini" ? "gemini-2.5-flash" : undefined;
+    const g = e.LLM_PROVIDER === "gemini";
     return {
       ...e,
-      LLM_MODEL_AGENT: e.LLM_MODEL_AGENT ?? d,
-      LLM_MODEL_JUDGE: e.LLM_MODEL_JUDGE ?? d,
-      LLM_MODEL_GENERATOR: e.LLM_MODEL_GENERATOR ?? d,
+      LLM_MODEL_AGENT:
+        e.LLM_MODEL_AGENT ?? (g ? "gemini-3.5-flash" : undefined),
+      LLM_MODEL_JUDGE:
+        e.LLM_MODEL_JUDGE ?? (g ? "gemini-3.5-flash" : undefined),
+      LLM_MODEL_GENERATOR:
+        e.LLM_MODEL_GENERATOR ?? (g ? "gemini-3.1-flash-lite" : undefined),
     };
   });
 

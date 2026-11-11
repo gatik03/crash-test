@@ -289,7 +289,14 @@ export class Orchestrator {
       if (!factory) throw new Error(`unknown profile ${sr.profile_id}`);
       const { audit, stats, error } = await runScenario({
         scenario,
-        agent: factory(scenario),
+        agent: factory(scenario, {
+          log: (payload) =>
+            this.sink.append({
+              scenarioRunId: id,
+              type: "agent.llm",
+              payload,
+            }),
+        }),
         rail: this.rail,
         sink: this.sink,
         scenarioRunId: id,

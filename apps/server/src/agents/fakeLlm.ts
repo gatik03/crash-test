@@ -20,7 +20,9 @@ export function fakeLlm(
   return {
     requests,
     async chat(req): Promise<ChatResult> {
-      requests.push(structuredClone(req));
+      const { onQueue, ...plain } = req; // functions cannot be cloned
+      onQueue?.(false);
+      requests.push(structuredClone(plain));
       const turn = turns[requests.length - 1];
       if (!turn) throw new Error("fake LLM script exhausted");
       const lastTool = req.messages.findLast((m) => m.role === "tool");

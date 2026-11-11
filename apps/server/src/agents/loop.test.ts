@@ -105,6 +105,43 @@ describe("loop termination", () => {
     expect((await a.run(stubTools)).termination).toBe("timeout");
   });
 
+  it("time queued on the rate limiter does not count toward the timeout", async () => {
+    const inner = fakeLlm([finish]);
+    const llm = {
+      chat: async (req: Parameters<typeof inner.chat>[0]) => {
+        req.onQueue?.(true);
+        await new Promise((r) => setTimeout(r, 60));
+        req.onQueue?.(false);
+        return inner.chat(req);
+      },
+    };
+    const a = createLlmAgent({
+      profile: PROFILES.naive,
+      llm,
+      model: "m",
+      scenario: task,
+      limits: { timeoutMs: 30 },
+    });
+    expect((await a.run(stubTools)).termination).toBe("finish");
+  });
+
+  it("awaits an in-flight tool call past the deadline, then times out", async () => {
+    let confirmed = false;
+    const { a } = agent([call("confirm_checkout", { quote_id: "q" }), finish], {
+      timeoutMs: 20,
+    });
+    const stats = await a.run({
+      ...stubTools,
+      confirm_checkout: async () => {
+        await new Promise((r) => setTimeout(r, 50));
+        confirmed = true;
+        return { status: 200, body: {} };
+      },
+    });
+    expect(confirmed).toBe(true);
+    expect(stats).toMatchObject({ termination: "timeout", steps: 1 });
+  });
+
   it("token_cap", async () => {
     const big: Turn = () => ({
       calls: [{ name: "list_orders", args: {} }],

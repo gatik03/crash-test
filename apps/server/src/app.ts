@@ -7,6 +7,8 @@ import { apiRoutes, type ApiDeps } from "./api/routes.js";
 import { LiveGate } from "./api/liveGate.js";
 import { loadFixtures } from "./api/replay.js";
 import { RunEventHub } from "./api/sse.js";
+import { registerLlmProfiles } from "./agents/registerProfiles.js";
+import type { LLMClient } from "./agents/llm/LLMClient.js";
 import type { Config } from "./config.js";
 import { openDb, type Db } from "./db/db.js";
 import { recoverStuckRuns } from "./db/runsRepo.js";
@@ -60,12 +62,16 @@ export async function createServer({
   logger,
   db = openDb(config.DATABASE_PATH),
   boot = true,
+  llm,
 }: {
   config: Config;
   logger: boolean;
   db?: Db;
   boot?: boolean;
+  /** Replaces the configured LLM client (tests). */
+  llm?: LLMClient;
 }): Promise<Server> {
+  registerLlmProfiles(config, llm);
   if (boot) {
     recoverStuckRuns(db);
     loadFixtures(db, FIXTURES_DIR);

@@ -108,15 +108,15 @@ async function run(config: Config, args: string[]): Promise<number> {
       trials: { type: "string", default: "1" },
     },
   });
-  if (!values.profile) {
-    console.error(`Pass --profile (one of: ${listProfiles().join(", ")})`);
-    return 2;
-  }
   const { orchestrator, db } = await createServer({
     config,
     logger: false,
     boot: false,
   });
+  if (!values.profile) {
+    console.error(`Pass --profile (one of: ${listProfiles().join(", ")})`);
+    return 2;
+  }
   const runId = orchestrator.createRun({
     suite_id: values.suite,
     profile_ids: values.profile.split(","),
@@ -130,7 +130,7 @@ async function run(config: Config, args: string[]): Promise<number> {
   for (const sr of listScenarioRuns(db, runId)) {
     if (sr.verdict === "ERROR" || sr.status === "error") errors++;
     console.log(
-      `\n${sr.scenario_id} ${sr.profile_id} trial ${sr.trial}: ${sr.verdict ?? "-"} (${sr.status}, ${sr.steps ?? 0} steps)${sr.error ? `  error: ${sr.error}` : ""}`,
+      `\n${sr.scenario_id} ${sr.profile_id} trial ${sr.trial}: ${sr.verdict ?? "-"} (${sr.status}, ${sr.termination ?? "-"}, ${sr.steps ?? 0} steps, tokens ${sr.tokens_in ?? 0}/${sr.tokens_out ?? 0})${sr.error ? `  error: ${sr.error}` : ""}`,
     );
     for (const a of listAssertionResults(db, sr.id))
       console.log(

@@ -19,6 +19,16 @@ const event = <T extends string, P extends z.ZodType>(type: T, payload: P) =>
 // Payload shape is not fixed by the spec for these kinds yet.
 const open = z.record(z.string(), z.unknown());
 
+/** One model turn of an LLM agent: plain text and tool-call data only (provider extras such as thought signatures are dropped). */
+export const AgentLlmPayload = z.object({
+  content: z.string().nullable(),
+  tool_calls: z.array(
+    z.object({ id: z.string(), name: z.string(), arguments: z.string() }),
+  ),
+  usage: z.object({ in: z.number().int(), out: z.number().int() }),
+});
+export type AgentLlmPayload = z.infer<typeof AgentLlmPayload>;
+
 /** Event kinds named in ARCHITECTURE 5.2 (write-ahead log), 5.7 (cleanup, SSE). */
 export const AppEvent = z.discriminatedUnion("type", [
   event(
@@ -40,6 +50,7 @@ export const AppEvent = z.discriminatedUnion("type", [
   event("run.started", open),
   event("scenario.started", open),
   event("agent.step", open),
+  event("agent.llm", AgentLlmPayload),
   event("shop.call", open),
   event("rail.charge", open),
   event("ledger.snapshot", open),
