@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+const bool = z.enum(["true", "false"]).transform((v) => v === "true");
+
 const Env = z
   .object({
     PORT: z.coerce.number().int().min(0).max(65535).default(3000),
@@ -16,6 +18,13 @@ const Env = z
     LLM_MODEL_AGENT: z.string().optional(),
     LLM_MODEL_JUDGE: z.string().optional(),
     LLM_MODEL_GENERATOR: z.string().optional(),
+    DEMO_MODE: z.enum(["local", "public"]).default("local"),
+    ADMIN_TOKEN: z.string().min(16).optional(),
+    ALLOW_LIVE_RUNS: bool.default(true),
+    LIVE_RUNS_PER_IP_PER_DAY: z.coerce.number().int().min(0).default(3),
+    LIVE_RUNS_GLOBAL_PER_DAY: z.coerce.number().int().min(0).default(30),
+    CLEANUP_REFUNDS_DEFAULT: bool.default(true),
+    RUN_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
   })
   .superRefine((e, ctx) => {
     if (e.PAYPAL_RAIL !== "paypal-sandbox") return;

@@ -1,10 +1,10 @@
 import { fromPayPalValue, type Scenario } from "@crash-test/shared";
-import { buildApp } from "../app.js";
-import { runScenarioAudit, type ScenarioAudit } from "../engine/runner.js";
+import Fastify from "fastify";
+import type { ScenarioAudit } from "../engine/runner.js";
+import { runScenario } from "../engine/scenarioRun.js";
 import { MemoryEventSink } from "../events/sink.js";
 import { MockRail } from "../rails/MockRail.js";
-import { simulatedUser } from "../scenarios/simulatedUser.js";
-import { CATEGORY_BY_SKU } from "../shop/catalog.js";
+import { shopRoutes } from "../shop/routes.js";
 import { ShopSessions } from "../shop/session.js";
 
 export type Body = Record<string, unknown>;
@@ -61,92 +61,22 @@ export async function runScripted(
   scenarioRunId: string,
 ): Promise<ScenarioAudit> {
   const sink = new MemoryEventSink();
-  const rail = new MockRail(sink);
-  const sessions = new ShopSessions();
-  const { token } = sessions.createShopSession({
-    scenarioRunId,
-    faults: scenario.environment.faults,
-    slots: Object.fromEntries(
-      scenario.environment.slots.map((s) => [s.id, s.seed_text]),
-    ),
-    rail,
-    sink,
-  });
-  const app = buildApp({ logger: false, shopSessions: sessions });
-  const user = simulatedUser(scenario);
-  const step = (tool: string, args: Body, result: unknown) =>
-    sink.append({
-      scenarioRunId,
-      type: "agent.step",
-      payload: { tool, args, result },
-    });
-  const http = async (
-    tool: string,
-    args: Body,
-    method: "GET" | "POST",
-    url: string,
-    payload?: Body,
-  ): Promise<ToolResult> => {
-    const res = await app.inject({
-      method,
-      url: `/shop/v1${url}`,
-      headers: { authorization: `Bearer ${token}` },
-      ...(payload && { payload }),
-    });
-    const result = { status: res.statusCode, body: res.json<Body>() };
-    step(tool, args, result);
-    return result;
-  };
-  const enc = encodeURIComponent;
-  const tools: Tools = {
-    search_products: (q) =>
-      http("search_products", { q }, "GET", `/products?q=${enc(q)}`),
-    add_to_cart: (product_id, quantity) => {
-      const args = { product_id, quantity };
-      return http("add_to_cart", args, "POST", "/cart/items", args);
-    },
-    create_quote: (cart_id) =>
-      http("create_quote", { cart_id }, "POST", "/checkout/quote", {
-        cart_id,
-      }),
-    confirm_checkout: (quote_id, idempotency_key) => {
-      const args = {
-        quote_id,
-        ...(idempotency_key !== undefined && { idempotency_key }),
-      };
-      return http("confirm_checkout", args, "POST", "/checkout/confirm", args);
-    },
-    list_orders: () => http("list_orders", {}, "GET", "/orders"),
-    get_order: (order_id) =>
-      http("get_order", { order_id }, "GET", `/orders/${enc(order_id)}`),
-    refund_order: (order_id, amount, reason) =>
-      http(
-        "refund_order",
-        { order_id, amount, reason },
-        "POST",
-        `/orders/${enc(order_id)}/refund`,
-        { amount, reason },
-      ),
-    ask_user: (question) => {
-      const { answer } = user.askUser(question);
-      step("ask_user", { question }, { answer });
-      return answer;
-    },
-    request_approval: (amount) => {
-      const { approved } = user.requestApproval(fromPayPalValue(amount, "USD"));
-      step("request_approval", { amount }, { approved });
-      return approved;
-    },
-  };
+  const shopSessions = new ShopSessions();
+  // Shop only, not app.ts: app.ts reaches engine/profiles.ts, which imports these scripts.
+  const app = Fastify({ logger: false });
+  app.register(shopRoutes, { prefix: "/shop/v1", sessions: shopSessions });
   try {
-    await script(tools);
+    const { audit } = await runScenario({
+      scenario,
+      agent: { run: script },
+      rail: new MockRail(sink),
+      sink,
+      scenarioRunId,
+      shopSessions,
+      app,
+    });
+    return audit;
   } finally {
     await app.close();
   }
-  return runScenarioAudit({
-    scenario,
-    events: sink.for(scenarioRunId),
-    rail,
-    catalog: CATEGORY_BY_SKU,
-  });
 }

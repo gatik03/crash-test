@@ -17,6 +17,12 @@ describe("loadConfig", () => {
       PAYPAL_ENV: "sandbox",
       DATABASE_PATH: "data/crash-test.db",
       LLM_MAX_RPM: 10,
+      DEMO_MODE: "local",
+      ALLOW_LIVE_RUNS: true,
+      LIVE_RUNS_PER_IP_PER_DAY: 3,
+      LIVE_RUNS_GLOBAL_PER_DAY: 30,
+      CLEANUP_REFUNDS_DEFAULT: true,
+      RUN_CONCURRENCY: 2,
     });
   });
 

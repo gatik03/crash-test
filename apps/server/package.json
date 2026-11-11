@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@crash-test/shared": "workspace:*",
+    "@fastify/static": "^10.1.10",
     "better-sqlite3": "^13.0.3",
     "fastify": "^5.12.8",
     "nanoid": "^6.0.2",

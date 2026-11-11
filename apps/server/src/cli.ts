@@ -1,4 +1,10 @@
+import { parseArgs } from "node:util";
+import { createServer } from "./app.js";
 import { loadConfig, type Config } from "./config.js";
+import { listEvents, listLedgerEntries } from "./db/repo.js";
+import { listAssertionResults, listScenarioRuns } from "./db/runsRepo.js";
+import { isCaptured } from "./engine/ledger.js";
+import { listProfiles } from "./engine/profiles.js";
 import { createLLMClient } from "./agents/llm/presets.js";
 import type { LLMClient, ToolDef } from "./agents/llm/LLMClient.js";
 
@@ -91,16 +97,82 @@ async function llmCheck(config: Config, args: string[]): Promise<number> {
   return passed > 0 ? 0 : 1;
 }
 
+/** `run --suite core-v1 --profile <id[,id]> [--scenario S06[,S07]] [--trials 1]` on the configured rail. */
+async function run(config: Config, args: string[]): Promise<number> {
+  const { values } = parseArgs({
+    args,
+    options: {
+      suite: { type: "string", default: "core-v1" },
+      profile: { type: "string" },
+      scenario: { type: "string" },
+      trials: { type: "string", default: "1" },
+    },
+  });
+  if (!values.profile) {
+    console.error(`Pass --profile (one of: ${listProfiles().join(", ")})`);
+    return 2;
+  }
+  const { orchestrator, db } = await createServer({
+    config,
+    logger: false,
+    boot: false,
+  });
+  const runId = orchestrator.createRun({
+    suite_id: values.suite,
+    profile_ids: values.profile.split(","),
+    ...(values.scenario && { scenario_ids: values.scenario.split(",") }),
+    trials: Number(values.trials),
+  });
+  console.log(`run ${runId} on rail ${orchestrator.rail.kind}`);
+  await orchestrator.wait(runId);
+
+  let errors = 0;
+  for (const sr of listScenarioRuns(db, runId)) {
+    if (sr.verdict === "ERROR" || sr.status === "error") errors++;
+    console.log(
+      `\n${sr.scenario_id} ${sr.profile_id} trial ${sr.trial}: ${sr.verdict ?? "-"} (${sr.status}, ${sr.steps ?? 0} steps)${sr.error ? `  error: ${sr.error}` : ""}`,
+    );
+    for (const a of listAssertionResults(db, sr.id))
+      console.log(
+        `  ${a.passed ? "pass" : "FAIL"}  ${a.category.padEnd(6)} ${a.assertion_type}`,
+      );
+    const ledger = listLedgerEntries(db, sr.id);
+    for (const e of ledger)
+      console.log(
+        `  ${e.kind.padEnd(7)} ${e.paypal_id}  ${e.status ?? ""}${e.amount_minor === null ? "" : `  ${e.amount_minor} ${e.currency ?? ""}`}`,
+      );
+    for (const e of listEvents(db, sr.id))
+      if (e.type === "cleanup.refund")
+        console.log(
+          `  cleanup refund ${e.payload.result.refundId} ${e.payload.result.status}  ${e.payload.result.amount.minor} ${e.payload.result.amount.currency}`,
+        );
+    // Re-read the rail after cleanup: what is still captured.
+    let left = 0;
+    for (const e of ledger.filter((x) => x.kind === "order")) {
+      const o = await orchestrator.rail.getOrder(e.paypal_id);
+      for (const c of o.captures) {
+        if (!isCaptured(c)) continue;
+        left += c.amount.minor;
+        for (const r of c.refunds)
+          if (r.status === "COMPLETED") left -= r.amount.minor;
+      }
+    }
+    console.log(`  still captured after cleanup: ${left} minor units`);
+  }
+  return errors > 0 ? 1 : 0;
+}
+
 async function main(): Promise<number> {
   const [cmd, ...rest] = process.argv.slice(2);
   switch (cmd) {
     case "llm-check":
       return llmCheck(loadConfig(), rest);
     case "run":
-      console.log("not implemented yet");
-      return 0;
+      return run(loadConfig(), rest);
     default:
-      console.error("Usage: pnpm cli <llm-check [--models a,b,c] | run>");
+      console.error(
+        "Usage: pnpm cli <llm-check [--models a,b,c] | run --profile <id> [--suite core-v1] [--scenario S06] [--trials 1]>",
+      );
       return 2;
   }
 }
