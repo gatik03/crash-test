@@ -92,6 +92,7 @@ export async function createServer({
     makeRail: (sink) => railFromConfig(config, sink),
     concurrency: config.RUN_CONCURRENCY,
     cleanupRefundsDefault: config.CLEANUP_REFUNDS_DEFAULT,
+    judgeTimeoutMs: config.JUDGE_TIMEOUT_MS,
     ...(client && judgeModel && { judge: { llm: client, model: judgeModel } }),
   });
   const app = buildApp({

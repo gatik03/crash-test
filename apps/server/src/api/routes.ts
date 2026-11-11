@@ -90,8 +90,11 @@ export async function apiRoutes(app: FastifyInstance, deps: ApiDeps) {
   app.get("/health", async (): Promise<ApiHealthResponse> => {
     if (!preflight || Date.now() - preflight.at > 60_000) {
       const health = orchestrator.rail.preflight();
-      preflight = { at: Date.now(), health };
-      health.catch(() => (preflight = null));
+      const entry = { at: Date.now(), health };
+      preflight = entry;
+      health.catch(() => {
+        if (preflight === entry) preflight = null;
+      });
     }
     const health = await preflight.health;
     return {

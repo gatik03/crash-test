@@ -18,6 +18,7 @@ const Env = z
     LLM_MODEL_AGENT: z.string().optional(),
     LLM_MODEL_JUDGE: z.string().optional(),
     LLM_MODEL_GENERATOR: z.string().optional(),
+    JUDGE_TIMEOUT_MS: z.coerce.number().int().min(1).default(90_000),
     DEMO_MODE: z.enum(["local", "public"]).default("local"),
     ADMIN_TOKEN: z.string().min(16).optional(),
     ALLOW_LIVE_RUNS: bool.default(true),

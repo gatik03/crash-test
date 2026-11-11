@@ -179,6 +179,8 @@ export type OrchestratorOptions = {
   cleanupRefundsDefault: boolean;
   /** Explains UNSAFE and OVER_REFUSAL runs (5.6); absent without an LLM key. */
   judge?: { llm: LLMClient; model: string };
+  /** Deadline per judge explanation; default 90 s. */
+  judgeTimeoutMs?: number;
 };
 
 /** Run expansion, queue and state machine (ARCHITECTURE 5.7): queued → running → done | error. */
@@ -324,11 +326,15 @@ export class Orchestrator {
       const results = await Promise.allSettled(
         jobs.map((j) => this.queue(() => this.runOne(j, cleanup, judges))),
       );
-      const status = results.some((r) => r.status === "rejected")
-        ? "error"
-        : "done";
       // Verdicts are already stored; the run ends once its explanations are in, so SSE carries judge.ready.
       await Promise.allSettled(judges);
+      const status =
+        results.some((r) => r.status === "rejected") ||
+        listScenarioRuns(db, runId).some((sr) =>
+          sr.error?.includes("cleanup refund failed"),
+        )
+          ? "error"
+          : "done";
       safely("run status", () =>
         setRunStatus(db, runId, status, new Date().toISOString()),
       );
@@ -350,12 +356,27 @@ export class Orchestrator {
     id: string,
     snapshot: LedgerSnapshot | undefined,
   ): Promise<string[]> {
+    const errors: string[] = [];
     try {
-      const snap =
-        snapshot ??
-        (await snapshotLedger({ events: this.sink.for(id), rail: this.rail }))
+      let snap = snapshot;
+      if (!snap) {
+        // One failing getOrder must not hide the captures on the other orders.
+        const rail = Object.create(this.rail) as Rail;
+        rail.getOrder = async (orderId) => {
+          try {
+            return await this.rail.getOrder(orderId);
+          } catch (e) {
+            errors.push(`${orderId}: ${errorText(e)}`);
+            return { id: orderId, status: "UNKNOWN", items: [], captures: [] };
+          }
+        };
+        snap = (await snapshotLedger({ events: this.sink.for(id), rail }))
           .snapshot;
-      return await cleanupRefunds(this.rail, this.sink, id, snap);
+      }
+      return [
+        ...errors,
+        ...(await cleanupRefunds(this.rail, this.sink, id, snap)),
+      ];
     } catch (e) {
       safely("cleanup event", () =>
         this.sink.append({
@@ -474,7 +495,12 @@ export class Orchestrator {
     this.judging.add(id);
     let status: ExplanationResponse["status"] = "failed";
     try {
-      const explanation = await explainScenarioRun({
+      const timeoutMs = this.o.judgeTimeoutMs ?? 90_000;
+      let timer: NodeJS.Timeout | undefined;
+      const timedOut = new Promise<"timeout">((r) => {
+        timer = setTimeout(() => r("timeout"), timeoutMs);
+      });
+      const explained = explainScenarioRun({
         llm: judge.llm,
         model: judge.model,
         input: {
@@ -496,8 +522,16 @@ export class Orchestrator {
           events: this.sink.for(id),
         },
       });
-      saveExplanation(this.o.db, id, explanation, judge.model);
-      if (explanation) status = "ready";
+      const explanation = await Promise.race([explained, timedOut]).finally(
+        () => clearTimeout(timer),
+      );
+      if (explanation === "timeout") {
+        console.error(`judge timed out for ${id} after ${timeoutMs} ms`);
+        saveExplanation(this.o.db, id, null, judge.model);
+      } else {
+        saveExplanation(this.o.db, id, explanation, judge.model);
+        if (explanation) status = "ready";
+      }
     } catch (e) {
       console.error(`judge failed for ${id}: ${errorText(e)}`);
     } finally {

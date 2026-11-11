@@ -5,7 +5,7 @@ import { RunEventHub } from "../api/sse.js";
 import { buildApp, SUITES_DIR } from "../app.js";
 import { openDb } from "../db/db.js";
 import { listEvents } from "../db/repo.js";
-import { listScenarioRuns } from "../db/runsRepo.js";
+import { getRun, listScenarioRuns } from "../db/runsRepo.js";
 import { MockRail } from "../rails/MockRail.js";
 import type { Rail } from "../rails/Rail.js";
 import { loadSuite } from "../scenarios/loader.js";
@@ -19,6 +19,7 @@ const usd = (minor: number) => ({ minor, currency: "USD" as const });
 async function orchestrator(
   patch: (r: MockRail) => void,
   judge?: { llm: LLMClient; model: string },
+  judgeTimeoutMs?: number,
 ) {
   const db = openDb(":memory:");
   const shopSessions = new ShopSessions();
@@ -38,6 +39,7 @@ async function orchestrator(
     concurrency: 1,
     cleanupRefundsDefault: true,
     ...(judge && { judge }),
+    ...(judgeTimeoutMs && { judgeTimeoutMs }),
   });
   return { o, db, hub };
 }
@@ -139,6 +141,7 @@ describe("Orchestrator", () => {
     expect(sr?.verdict).toBe("UNSAFE");
     expect(sr?.status).toBe("error");
     expect(sr?.error).toMatch(/cleanup refund failed: .*refund down/);
+    expect(getRun(db, runId)?.status).toBe("error");
     const types = listEvents(db, sr!.id).map((e) => e.type);
     expect(types.filter((t) => t === "cleanup.refund")).toHaveLength(1);
     expect(types).toContain("cleanup.error");
@@ -200,5 +203,47 @@ describe("Orchestrator", () => {
     const [sr] = listScenarioRuns(db, second);
     expect(sr).toMatchObject({ verdict: "UNSAFE", status: "done" });
     expect(o.explanation(sr!.id).status).toBe("failed");
+  });
+
+  it("a hung judge times out, is stored as failed, and the run still finishes with its verdict", async () => {
+    const llm: LLMClient = { chat: () => new Promise(() => {}) };
+    const { o, db } = await orchestrator(() => {}, { llm, model: "j" }, 20);
+    const runId = o.createRun({
+      profile_ids: ["saboteur"],
+      scenario_ids: ["S01"],
+    });
+    await o.wait(runId);
+    const [sr] = listScenarioRuns(db, runId);
+    expect(sr).toMatchObject({ verdict: "UNSAFE", status: "done" });
+    expect(getRun(db, runId)?.status).toBe("done");
+    expect(o.explanation(sr!.id).status).toBe("failed");
+  });
+
+  it("WAL fallback still refunds other orders when one getOrder fails", async () => {
+    const { o, db } = await orchestrator((r) => {
+      const get = r.getOrder.bind(r);
+      let first: string | undefined;
+      r.getOrder = (id) => {
+        first ??= id;
+        return id === first ? Promise.reject(new Error("order down")) : get(id);
+      };
+    });
+    const runId = o.createRun({
+      profile_ids: ["saboteur"],
+      scenario_ids: ["S06"],
+    });
+    await o.wait(runId);
+    const [sr] = listScenarioRuns(db, runId);
+    const events = listEvents(db, sr!.id);
+    const orders = new Set(
+      events.flatMap((e) =>
+        e.type === "rail.charge.result" ? [e.payload.result.orderId] : [],
+      ),
+    );
+    expect(orders.size).toBeGreaterThan(1);
+    expect(sr?.error).toMatch(/order down/);
+    expect(events.filter((e) => e.type === "cleanup.refund").length).toBe(
+      orders.size - 1,
+    );
   });
 });

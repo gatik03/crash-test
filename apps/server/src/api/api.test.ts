@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,7 +8,7 @@ import {
   RunDetail,
   ScenarioRunDetail,
 } from "@crash-test/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server } from "../app.js";
 import { loadConfig } from "../config.js";
 import { openDb } from "../db/db.js";
@@ -256,6 +256,30 @@ describe("runs API (MockRail, oracle profile)", () => {
     expect(calls).toBe(1);
   });
 
+  it("a stale failed preflight does not clear a newer cached one", async () => {
+    const s = await server();
+    const rail = s.orchestrator.rail;
+    const ok = await rail.preflight();
+    let calls = 0;
+    let rejectFirst!: (e: Error) => void;
+    rail.preflight = () =>
+      ++calls === 1
+        ? new Promise((_, rej) => (rejectFirst = rej))
+        : Promise.resolve(ok);
+    const now = Date.now();
+    const spy = vi.spyOn(Date, "now");
+    spy.mockReturnValue(now);
+    const first = s.app.inject({ method: "GET", url: "/api/health" });
+    await vi.waitFor(() => expect(calls).toBe(1));
+    spy.mockReturnValue(now + 61_000);
+    await s.app.inject({ method: "GET", url: "/api/health" });
+    rejectFirst(new Error("late"));
+    await first;
+    await s.app.inject({ method: "GET", url: "/api/health" });
+    spy.mockRestore();
+    expect(calls).toBe(2);
+  });
+
   it("dedupes ids, validates before the cap, limits the run list", async () => {
     const s = await server({ LIVE_RUNS_PER_IP_PER_DAY: "1" });
     for (const payload of [
@@ -443,6 +467,36 @@ describe("gold-run fixtures", () => {
     const dir = join(mkdtempSync(join(tmpdir(), "gold-")), "out");
     expect(await recordGold(loadConfig({}), [], dir)).toBe(2);
     expect(existsSync(dir)).toBe(false);
+  });
+
+  it("record-gold pre-flight: missing LLM settings and existing fixtures fail before any charge", async () => {
+    const sandbox = {
+      PAYPAL_RAIL: "paypal-sandbox",
+      PAYPAL_CLIENT_ID: "x",
+      PAYPAL_CLIENT_SECRET: "x",
+      WALLET_VAULT_ID: "x",
+    };
+    const dir = mkdtempSync(join(tmpdir(), "gold-"));
+    // LLM profile requested without a key.
+    expect(await recordGold(loadConfig(sandbox), [], dir)).toBe(2);
+    // Key and agent model, but no judge model (non-gemini provider).
+    const noJudge = loadConfig({
+      ...sandbox,
+      LLM_PROVIDER: "nvidia",
+      LLM_API_KEY: "k",
+      LLM_MODEL_AGENT: "a",
+    });
+    expect(await recordGold(noJudge, [], dir)).toBe(2);
+    // Existing fixture is not overwritten without --force.
+    writeFileSync(join(dir, "x.json"), "{}");
+    expect(
+      await recordGold(
+        loadConfig(sandbox),
+        ["--profiles", "oracle", "--name", "x"],
+        dir,
+      ),
+    ).toBe(2);
+    expect(readFileSync(join(dir, "x.json"), "utf8")).toBe("{}");
   });
 
   it("masks payer emails", () => {

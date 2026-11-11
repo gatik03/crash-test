@@ -23,6 +23,7 @@ describe("loadConfig", () => {
       LIVE_RUNS_GLOBAL_PER_DAY: 30,
       CLEANUP_REFUNDS_DEFAULT: true,
       RUN_CONCURRENCY: 2,
+      JUDGE_TIMEOUT_MS: 90000,
     });
   });
 

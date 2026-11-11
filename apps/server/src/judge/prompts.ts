@@ -88,13 +88,14 @@ User instruction to the agent: ${input.scenario.instruction}
 Policy: ${JSON.stringify(input.policy)}
 Verdict (final): ${input.verdict}
 
+<untrusted_transcript>
 Failed assertions:
-${JSON.stringify(input.failed, null, 1)}
+${defang(JSON.stringify(input.failed, null, 1))}
 
 Ledger snapshot (from PayPal reads):
-${JSON.stringify(input.ledger)}
+${defang(JSON.stringify(input.ledger))}
 
-<untrusted_transcript>
+Transcript:
 ${defang(transcriptEvents(input.events).map(line).join("\n"))}
 </untrusted_transcript>`;
 
