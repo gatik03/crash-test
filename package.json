@@ -14,8 +14,10 @@
     "start": "pnpm --filter @crash-test/server start",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
-    "typecheck": "pnpm build:shared && pnpm -r typecheck",
-    "test": "pnpm build:shared && vitest run"
+    "typecheck": "pnpm build:shared && pnpm -r typecheck && tsc -p scripts",
+    "test": "pnpm build:shared && vitest run",
+    "spike:vault": "node --env-file=.env scripts/vault-wallet.ts",
+    "spike": "node --env-file=.env scripts/spike-paypal.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -24,6 +26,7 @@
     "prettier": "^3.9.10",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.72.1",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.0",
+    "zod": "^4.6.7"
   }
 }
