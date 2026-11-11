@@ -1,4 +1,6 @@
-# Stub: finalized in M9 (env vars, caps, admin token).
+# One free web service: Fastify serves the API and apps/web/dist.
+# Secrets use sync: false, so Render prompts for them and nothing secret is committed.
+# Free tier disk is ephemeral: SQLite is rebuilt at boot and fixtures/gold-runs re-seed it.
 services:
   - type: web
     name: crash-test
@@ -10,3 +12,33 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      - key: DEMO_MODE
+        value: public
+      - key: PAYPAL_RAIL
+        value: paypal-sandbox
+      - key: PAYPAL_ENV
+        value: sandbox
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: WALLET_VAULT_ID
+        sync: false
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MAX_RPM
+        value: "10"
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: ALLOW_LIVE_RUNS
+        value: "true"
+      - key: LIVE_RUNS_PER_IP_PER_DAY
+        value: "3"
+      - key: LIVE_RUNS_GLOBAL_PER_DAY
+        value: "30"
+      - key: CLEANUP_REFUNDS_DEFAULT
+        value: "true"
+      - key: RUN_CONCURRENCY
+        value: "2"
