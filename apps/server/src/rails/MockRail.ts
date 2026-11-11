@@ -10,7 +10,14 @@ import {
   type RefundRequest,
   type RefundResult,
 } from "@crash-test/shared";
-import { RailError, type Rail, type RailHealth } from "./Rail.js";
+import type { EventSink } from "../events/sink.js";
+import {
+  chargeBreakdown,
+  loggedCharge,
+  RailError,
+  type Rail,
+  type RailHealth,
+} from "./Rail.js";
 
 /** Deterministic in-memory rail with PayPal-like idempotency. Tests, CI and keyless dev only. */
 export class MockRail implements Rail {
@@ -20,36 +27,24 @@ export class MockRail implements Rail {
   private readonly refunds = new Map<string, RefundResult>();
   private n = 0;
 
+  constructor(private readonly sink?: EventSink) {}
+
   preflight(): Promise<RailHealth> {
     return Promise.resolve({ ok: true, checks: [{ name: "mock", ok: true }] });
   }
 
-  charge(req: ChargeRequest): Promise<ChargeResult> {
+  async charge(req: ChargeRequest): Promise<ChargeResult> {
     if (!ChargeRequest.safeParse(req).success)
-      return Promise.reject(
-        new RailError("invalid_request", "bad charge request"),
-      );
+      throw new RailError("invalid_request", "bad charge request");
+    // Like PayPal: the body is validated even when the request id replays.
+    chargeBreakdown(req);
     const replay = this.charges.get(req.requestId);
-    if (replay) return Promise.resolve({ ...replay });
+    return loggedCharge(this.sink, req, () =>
+      Promise.resolve(replay ? { ...replay } : this.complete(req)),
+    );
+  }
 
-    // PayPal requires amount.value to equal the breakdown sum.
-    let sum: Money = { minor: 0, currency: req.total.currency };
-    for (const i of req.items) {
-      sum = add(sum, {
-        minor: i.unitAmount.minor * i.quantity,
-        currency: i.unitAmount.currency,
-      });
-    }
-    for (const f of req.fees) sum = add(sum, f.amount);
-    if (compare(sum, req.total) !== 0) {
-      return Promise.reject(
-        new RailError(
-          "invalid_request",
-          "total does not equal items plus fees",
-        ),
-      );
-    }
-
+  private complete(req: ChargeRequest): ChargeResult {
     const id = ++this.n;
     const result: ChargeResult = {
       orderId: `MOCK-ORDER-${id}`,
@@ -71,7 +66,7 @@ export class MockRail implements Rail {
       ],
     });
     this.charges.set(req.requestId, result);
-    return Promise.resolve({ ...result });
+    return { ...result };
   }
 
   refund(req: RefundRequest): Promise<RefundResult> {
@@ -107,6 +102,8 @@ export class MockRail implements Rail {
       status: result.status,
       amount: { ...amount },
     });
+    capture.status =
+      compare(amount, remaining) === 0 ? "REFUNDED" : "PARTIALLY_REFUNDED";
     this.refunds.set(req.requestId, result);
     return Promise.resolve({ ...result });
   }

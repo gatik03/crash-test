@@ -16,8 +16,11 @@
     "format": "prettier --write .",
     "typecheck": "pnpm build:shared && pnpm -r typecheck && tsc -p scripts",
     "test": "pnpm build:shared && vitest run",
+    "test:sandbox": "pnpm build:shared && SANDBOX_TESTS=1 vitest run apps/server/src/rails/PayPalSandboxRail.test.ts",
+    "check:sandbox-only": "node scripts/check-sandbox-only.ts",
     "spike:vault": "node --env-file=.env scripts/vault-wallet.ts",
-    "spike": "node --env-file=.env scripts/spike-paypal.ts"
+    "spike": "node --env-file=.env scripts/spike-paypal.ts",
+    "cli": "pnpm --filter @crash-test/server exec tsx --env-file=../../.env src/cli.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -32,17 +32,21 @@ It charges $17.49 to the vaulted wallet, replays the same `PayPal-Request-Id` an
 
 Option A (vaulted PayPal wallet) works. No fallback needed.
 
-| Step                                        | Observed                                                                                                               |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Vault order create                          | `PAYER_ACTION_REQUIRED`, approval link rel `payer-action` (`/checkoutnow?token=<order id>`).                           |
-| Buyer approval                              | Order status goes `PAYER_ACTION_REQUIRED` → `APPROVED`; polling `GET /v2/checkout/orders/{id}` detects it.             |
-| Vault capture                               | Order `COMPLETED`; `payment_source.paypal.attributes.vault.status` was already `VAULTED` (no wait needed in this run). |
-| Charge with `vault_id`                      | **HTTP 201**, order `COMPLETED` immediately, one capture. No buyer popup.                                              |
-| Replay, same `PayPal-Request-Id`            | **HTTP 200** (not 201), same order id and same capture id. Treat any 2xx as success.                                   |
-| New `PayPal-Request-Id`, same body          | HTTP 201, a different order id (a real second charge).                                                                 |
-| `GET` order                                 | `purchase_units[0].payments.captures[]` has id, status, amount as ARCHITECTURE 7.6 says.                               |
-| Partial refund `{amount}`                   | Refund `COMPLETED` for that amount.                                                                                    |
-| Refund with empty body `{}` after a partial | Refunds exactly the remaining amount ($17.49 − $9.00 = $8.49).                                                         |
-| `GET` order after refunds                   | Capture status `REFUNDED`; refunds listed under `purchase_units[0].payments.refunds[]`.                                |
+| Step                                                                       | Observed                                                                                                               |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Vault order create                                                         | `PAYER_ACTION_REQUIRED`, approval link rel `payer-action` (`/checkoutnow?token=<order id>`).                           |
+| Buyer approval                                                             | Order status goes `PAYER_ACTION_REQUIRED` → `APPROVED`; polling `GET /v2/checkout/orders/{id}` detects it.             |
+| Vault capture                                                              | Order `COMPLETED`; `payment_source.paypal.attributes.vault.status` was already `VAULTED` (no wait needed in this run). |
+| Charge with `vault_id`                                                     | **HTTP 201**, order `COMPLETED` immediately, one capture. No buyer popup.                                              |
+| Replay, same `PayPal-Request-Id`                                           | **HTTP 200** (not 201), same order id and same capture id. Treat any 2xx as success.                                   |
+| New `PayPal-Request-Id`, same body                                         | HTTP 201, a different order id (a real second charge).                                                                 |
+| `GET` order                                                                | `purchase_units[0].payments.captures[]` has id, status, amount as ARCHITECTURE 7.6 says.                               |
+| Partial refund `{amount}`                                                  | Refund `COMPLETED` for that amount.                                                                                    |
+| Refund with empty body `{}` after a partial                                | Refunds exactly the remaining amount ($17.49 − $9.00 = $8.49).                                                         |
+| `GET` order after refunds                                                  | Capture status `REFUNDED`; refunds listed under `purchase_units[0].payments.refunds[]`.                                |
+| Refund links                                                               | Each refund's `links` has rel `up` → `/v2/payments/captures/{capture_id}`; used to nest refunds under captures.        |
+| Replay, same id, invalid body (empty `purchase_units`, amount mismatch)    | HTTP 400 / 422, same as for a new id: the body is validated before the idempotency lookup.                             |
+| Replay, same id, different valid body (other amount, other or no vault id) | HTTP 200 with the original order; nothing new is charged.                                                              |
+| New id with an unknown vault id                                            | HTTP 403 `NOT_AUTHORIZED`, no order. `recoverByRequestId` relies on this (2026-11-12).                                 |
 
 Failure seen during setup: sandbox accounts with country IN → checkout page error "This seller doesn't accept payments in your currency" (and earlier a generic "Things don't appear to be working"). Fixed by US business and personal accounts plus a new app linked to the US business account.

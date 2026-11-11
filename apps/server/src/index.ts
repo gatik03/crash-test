@@ -1,7 +1,7 @@
 import { buildApp } from "./app.js";
+import { loadConfig } from "./config.js";
 
-// shortcut: raw env read, move to a zod-validated config.ts once M2 adds real settings
-const port = Number(process.env.PORT ?? 3000);
+const config = loadConfig();
 
 const app = buildApp({ logger: true });
-await app.listen({ port, host: "0.0.0.0" });
+await app.listen({ port: config.PORT, host: "0.0.0.0" });

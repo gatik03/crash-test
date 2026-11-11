@@ -1,0 +1,70 @@
+import { z } from "zod";
+
+const Env = z
+  .object({
+    PORT: z.coerce.number().int().min(0).max(65535).default(3000),
+    PAYPAL_RAIL: z.enum(["paypal-sandbox", "mock"]).default("mock"),
+    PAYPAL_ENV: z.string().default("sandbox"),
+    PAYPAL_CLIENT_ID: z.string().optional(),
+    PAYPAL_CLIENT_SECRET: z.string().optional(),
+    WALLET_VAULT_ID: z.string().optional(),
+    DATABASE_PATH: z.string().min(1).default("data/crash-test.db"),
+    LLM_PROVIDER: z.enum(["gemini", "nvidia"]).optional(),
+    LLM_API_KEY: z.string().optional(),
+    LLM_BASE_URL: z.url().optional(),
+    LLM_MAX_RPM: z.coerce.number().int().min(1).default(10),
+    LLM_MODEL_AGENT: z.string().optional(),
+    LLM_MODEL_JUDGE: z.string().optional(),
+    LLM_MODEL_GENERATOR: z.string().optional(),
+  })
+  .superRefine((e, ctx) => {
+    if (e.PAYPAL_RAIL !== "paypal-sandbox") return;
+    if (e.PAYPAL_ENV !== "sandbox")
+      ctx.addIssue({
+        code: "custom",
+        path: ["PAYPAL_ENV"],
+        message: 'must be "sandbox"',
+      });
+    for (const k of [
+      "PAYPAL_CLIENT_ID",
+      "PAYPAL_CLIENT_SECRET",
+      "WALLET_VAULT_ID",
+    ] as const) {
+      if (!e[k])
+        ctx.addIssue({
+          code: "custom",
+          path: [k],
+          message: "required for PAYPAL_RAIL=paypal-sandbox",
+        });
+    }
+  })
+  .transform((e) => {
+    // Model ids default only for gemini; other providers must name theirs.
+    const d = e.LLM_PROVIDER === "gemini" ? "gemini-2.5-flash" : undefined;
+    return {
+      ...e,
+      LLM_MODEL_AGENT: e.LLM_MODEL_AGENT ?? d,
+      LLM_MODEL_JUDGE: e.LLM_MODEL_JUDGE ?? d,
+      LLM_MODEL_GENERATOR: e.LLM_MODEL_GENERATOR ?? d,
+    };
+  });
+
+export type Config = z.infer<typeof Env>;
+
+/** Parse env once at boot; throws naming the bad variables, never their values. */
+export function loadConfig(
+  env: Record<string, string | undefined> = process.env,
+): Config {
+  // Empty strings (as in a copied .env.example) mean unset.
+  const cleaned = Object.fromEntries(
+    Object.entries(env).filter(([, v]) => v !== ""),
+  );
+  const parsed = Env.safeParse(cleaned);
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((i) => `${i.path.join(".")}: ${i.message}`)
+      .join("; ");
+    throw new Error(`Invalid configuration: ${issues}`);
+  }
+  return parsed.data;
+}

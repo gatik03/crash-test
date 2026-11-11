@@ -69,7 +69,8 @@ export function railContract(makeRail: () => Rail | Promise<Rail>): void {
       const again = await rail.charge({
         ...req,
         items: req.items.map((i) => ({ ...i, quantity: i.quantity + 1 })),
-        total: usd(req.total.minor * 2),
+        // Still a valid body: PayPal validates it before looking up the request id.
+        total: usd(req.total.minor + 999),
       });
       expect(again).toEqual(first);
       expect((await rail.getOrder(first.orderId)).captures).toHaveLength(1);
@@ -92,8 +93,14 @@ export function railContract(makeRail: () => Rail | Promise<Rail>): void {
         reason: "partial",
       });
       expect(partial.amount).toEqual(usd(900));
+      expect((await rail.getOrder(orderId)).captures[0]?.status).toBe(
+        "PARTIALLY_REFUNDED",
+      );
       const full = await rail.refund({ requestId: randomUUID(), captureId });
       expect(full.amount).toEqual(usd(849));
+      expect((await rail.getOrder(orderId)).captures[0]?.status).toBe(
+        "REFUNDED",
+      );
       const refunds = (await rail.getOrder(orderId)).captures[0]?.refunds ?? [];
       expect(refunds.map((r) => r.amount.minor)).toEqual([900, 849]);
     });
