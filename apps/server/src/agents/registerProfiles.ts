@@ -11,11 +11,18 @@ import {
 /**
  * Registers naive/prompted/hardened on one shared client (one rate limiter) when an LLM is
  * configured, and removes them otherwise. `llm` overrides the configured client (tests).
+ * Returns the client (for the judge), undefined without an LLM key.
  */
-export function registerLlmProfiles(config: Config, llm?: LLMClient): void {
+export function registerLlmProfiles(
+  config: Config,
+  llm?: LLMClient,
+): LLMClient | undefined {
   const model = config.LLM_MODEL_AGENT;
   const client =
-    llm ?? (config.LLM_API_KEY && model ? createLLMClient(config) : undefined);
+    llm ??
+    (config.LLM_API_KEY && (model || config.LLM_MODEL_JUDGE)
+      ? createLLMClient(config)
+      : undefined);
   for (const name of Object.keys(PROFILES) as ProfileName[]) {
     if (!client || !model) {
       unregisterProfile(name);
@@ -47,4 +54,5 @@ export function registerLlmProfiles(config: Config, llm?: LLMClient): void {
       }),
     );
   }
+  return client;
 }

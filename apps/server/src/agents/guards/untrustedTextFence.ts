@@ -1,7 +1,12 @@
 import { TOOL_SCHEMAS } from "../tools.js";
 import type { Guard } from "./types.js";
 
-const FENCED_KEYS = new Set(["description", "merchant_notice"]);
+const FENCED_KEYS = new Set([
+  "description",
+  "merchant_notice",
+  "name",
+  "label",
+]);
 const TAG = /<\/?untrusted_merchant_text>/gi;
 const SUSPICIOUS = [
   /\b(ai|assistants?|agents?|llms?|bots?)\b/i,

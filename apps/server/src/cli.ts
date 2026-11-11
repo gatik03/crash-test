@@ -6,6 +6,7 @@ import { listAssertionResults, listScenarioRuns } from "./db/runsRepo.js";
 import { isCaptured } from "./engine/ledger.js";
 import { listProfiles } from "./engine/profiles.js";
 import { createLLMClient } from "./agents/llm/presets.js";
+import { recordGold } from "./recordGold.js";
 import type { LLMClient, ToolDef } from "./agents/llm/LLMClient.js";
 
 const DEFAULT_MODELS = [
@@ -169,9 +170,11 @@ async function main(): Promise<number> {
       return llmCheck(loadConfig(), rest);
     case "run":
       return run(loadConfig(), rest);
+    case "record-gold":
+      return recordGold(loadConfig(), rest);
     default:
       console.error(
-        "Usage: pnpm cli <llm-check [--models a,b,c] | run --profile <id> [--suite core-v1] [--scenario S06] [--trials 1]>",
+        "Usage: pnpm cli <llm-check [--models a,b,c] | run --profile <id> [--suite core-v1] [--scenario S06] [--trials 1] | record-gold [--profiles a,b] [--trials 1] [--scenarios S01,S06] [--model id] [--name x]>",
       );
       return 2;
   }

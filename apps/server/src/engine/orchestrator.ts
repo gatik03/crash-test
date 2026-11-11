@@ -1,6 +1,7 @@
 import {
   CreateRunRequest,
   type AppEvent,
+  type ExplanationResponse,
   type LedgerSnapshot,
   type ProfileScoreDto,
   type RefundRequest,
@@ -8,6 +9,8 @@ import {
   type ScenarioRun,
 } from "@crash-test/shared";
 import { nanoid } from "nanoid";
+import type { z } from "zod";
+import type { LLMClient } from "../agents/llm/LLMClient.js";
 import type { RunEventHub } from "../api/sse.js";
 import type { Config } from "../config.js";
 import type { Db } from "../db/db.js";
@@ -20,13 +23,19 @@ import {
   updateScenarioRun,
 } from "../db/runsRepo.js";
 import type { NewEvent } from "../events/sink.js";
+import {
+  explainScenarioRun,
+  explanationStatus,
+  saveExplanation,
+} from "../judge/explain.js";
 import { MockRail } from "../rails/MockRail.js";
 import { PayPalClient } from "../rails/paypalClient.js";
 import { PayPalSandboxRail } from "../rails/PayPalSandboxRail.js";
 import type { Rail } from "../rails/Rail.js";
 import type { ShopSessions } from "../shop/session.js";
-import { isCaptured } from "./ledger.js";
+import { isCaptured, snapshotLedger } from "./ledger.js";
 import { getProfile } from "./profiles.js";
+import type { ScenarioAudit } from "./runner.js";
 import {
   runScenario,
   type Injector,
@@ -67,19 +76,26 @@ export function railFromConfig(config: Config, sink: ReadableSink): Rail {
   });
 }
 
-/** Refunds whatever each capture still holds; runs after the audit snapshot, so assertions never see it (5.7). */
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const REFUND_OK = new Set(["COMPLETED", "PENDING"]);
+
+/**
+ * Refunds whatever each capture still holds; runs after the audit snapshot, so assertions never see it (5.7).
+ * COMPLETED and PENDING refunds count as covered. Goes on past a failed capture; returns one line per failure.
+ */
 export async function cleanupRefunds(
   rail: Rail,
   sink: ReadableSink,
   scenarioRunId: string,
   snapshot: LedgerSnapshot,
-): Promise<void> {
+): Promise<string[]> {
+  const errors: string[] = [];
   for (const order of snapshot.orders)
     for (const c of order.captures) {
       if (!isCaptured(c)) continue;
       let refunded = 0;
       for (const r of c.refunds)
-        if (r.status === "COMPLETED") refunded += r.amount.minor;
+        if (REFUND_OK.has(r.status)) refunded += r.amount.minor;
       const remaining = c.amount.minor - refunded;
       if (remaining <= 0) continue;
       const request: RefundRequest = {
@@ -88,13 +104,25 @@ export async function cleanupRefunds(
         amount: { minor: remaining, currency: c.amount.currency },
         reason: "Crash Test cleanup",
       };
-      const result = await rail.refund(request);
-      sink.append({
-        scenarioRunId,
-        type: "cleanup.refund",
-        payload: { request, result },
-      });
+      try {
+        const result = await rail.refund(request);
+        sink.append({
+          scenarioRunId,
+          type: "cleanup.refund",
+          payload: { request, result },
+        });
+        if (!REFUND_OK.has(result.status))
+          errors.push(`${c.id}: refund ${result.refundId} ${result.status}`);
+      } catch (e) {
+        errors.push(`${c.id}: ${errorText(e)}`);
+        sink.append({
+          scenarioRunId,
+          type: "cleanup.error",
+          payload: { captureId: c.id, message: errorText(e) },
+        });
+      }
     }
+  return errors;
 }
 
 /** PRD 8 per profile: worst-of over trials per scenario, then the profile score. */
@@ -129,6 +157,17 @@ export function scoreRun(
 
 type Job = { sr: ScenarioRun; scenario: Scenario };
 
+const JUDGED: ReadonlySet<string> = new Set(["UNSAFE", "OVER_REFUSAL"]);
+
+/** Bookkeeping must never become an unhandled rejection or abort a run. */
+function safely(what: string, f: () => void): void {
+  try {
+    f();
+  } catch (e) {
+    console.error(`orchestrator: ${what} failed: ${errorText(e)}`);
+  }
+}
+
 export type OrchestratorOptions = {
   db: Db;
   app: Injector;
@@ -138,6 +177,8 @@ export type OrchestratorOptions = {
   makeRail: (sink: ReadableSink) => Rail;
   concurrency: number;
   cleanupRefundsDefault: boolean;
+  /** Explains UNSAFE and OVER_REFUSAL runs (5.6); absent without an LLM key. */
+  judge?: { llm: LLMClient; model: string };
 };
 
 /** Run expansion, queue and state machine (ARCHITECTURE 5.7): queued → running → done | error. */
@@ -146,6 +187,8 @@ export class Orchestrator {
   private readonly sink: ReadableSink;
   private readonly runIdOf = new Map<string, string>();
   private readonly pending = new Map<string, Promise<void>>();
+  /** Scenario runs whose judge explanation is in flight. */
+  private readonly judging = new Set<string>();
   private readonly queue;
 
   constructor(private readonly o: OrchestratorOptions) {
@@ -156,7 +199,8 @@ export class Orchestrator {
       append(e: NewEvent): AppEvent {
         const stored = inner.append(e);
         const runId = runIdOf.get(e.scenarioRunId);
-        if (runId) o.hub.publish(runId, stored.type, stored);
+        if (runId)
+          safely("publish", () => o.hub.publish(runId, stored.type, stored));
         return stored;
       },
       for: (id) => listEvents(o.db, id),
@@ -165,9 +209,20 @@ export class Orchestrator {
     this.queue = limiter(o.concurrency);
   }
 
-  /** Validated request in, run id out; the run proceeds in the background. */
-  createRun(input: unknown): string {
-    const req = CreateRunRequest.parse(input);
+  /** Validates a request against the suites and profiles; profile and scenario ids deduplicated. */
+  plan(input: unknown): {
+    req: z.output<typeof CreateRunRequest>;
+    suite: readonly Scenario[];
+    scenarios: readonly Scenario[];
+  } {
+    const parsed = CreateRunRequest.parse(input);
+    const req = {
+      ...parsed,
+      profile_ids: [...new Set(parsed.profile_ids)],
+      ...(parsed.scenario_ids && {
+        scenario_ids: [...new Set(parsed.scenario_ids)],
+      }),
+    };
     const suite = this.o.suites[req.suite_id];
     if (!suite) throw new OrchestratorError("unknown_suite", req.suite_id);
     for (const p of req.profile_ids)
@@ -179,7 +234,12 @@ export class Orchestrator {
           return s;
         })
       : suite;
+    return { req, suite, scenarios };
+  }
 
+  /** Validated request in, run id out; the run proceeds in the background. */
+  createRun(input: unknown): string {
+    const { req, suite, scenarios } = this.plan(input);
     const runId = `run_${nanoid()}`;
     const now = new Date().toISOString();
     const cleanup = req.cleanup_refunds ?? this.o.cleanupRefundsDefault;
@@ -233,9 +293,16 @@ export class Orchestrator {
     return runId;
   }
 
-  /** Resolves when the run has reached done or error. */
+  /** Resolves when the run has reached done or error, judge explanations included. */
   wait(runId: string): Promise<void> {
     return this.pending.get(runId) ?? Promise.resolve();
+  }
+
+  /** Judge state of one scenario run: in flight here, else what is stored. */
+  explanation(scenarioRunId: string): ExplanationResponse {
+    return this.judging.has(scenarioRunId)
+      ? { status: "pending", explanation: null }
+      : explanationStatus(this.o.db, scenarioRunId);
   }
 
   private async execute(
@@ -245,28 +312,67 @@ export class Orchestrator {
     suite: readonly Scenario[],
   ): Promise<void> {
     const { db, hub } = this.o;
-    setRunStatus(db, runId, "running");
-    hub.publish(runId, "run.started", {
-      run_id: runId,
-      scenario_runs: jobs.map((j) => j.sr.id),
-    });
-    let status: "done" | "error" = "done";
     try {
-      await Promise.all(
-        jobs.map((j) => this.queue(() => this.runOne(j, cleanup))),
+      safely("run status", () => setRunStatus(db, runId, "running"));
+      safely("publish", () =>
+        hub.publish(runId, "run.started", {
+          run_id: runId,
+          scenario_runs: jobs.map((j) => j.sr.id),
+        }),
       );
-    } catch {
-      status = "error";
+      const judges: Promise<void>[] = [];
+      const results = await Promise.allSettled(
+        jobs.map((j) => this.queue(() => this.runOne(j, cleanup, judges))),
+      );
+      const status = results.some((r) => r.status === "rejected")
+        ? "error"
+        : "done";
+      // Verdicts are already stored; the run ends once its explanations are in, so SSE carries judge.ready.
+      await Promise.allSettled(judges);
+      safely("run status", () =>
+        setRunStatus(db, runId, status, new Date().toISOString()),
+      );
+      safely("publish", () =>
+        hub.publish(runId, "run.finished", {
+          run_id: runId,
+          status,
+          scores: scoreRun(listScenarioRuns(db, runId), suite),
+        }),
+      );
+    } finally {
+      this.pending.delete(runId);
+      for (const j of jobs) this.runIdOf.delete(j.sr.id);
     }
-    setRunStatus(db, runId, status, new Date().toISOString());
-    hub.publish(runId, "run.finished", {
-      run_id: runId,
-      status,
-      scores: scoreRun(listScenarioRuns(db, runId), suite),
-    });
   }
 
-  private async runOne({ sr, scenario }: Job, cleanup: boolean) {
+  /** Cleanup from the audit snapshot, or, when the run threw before one, from the rail's orders via the WAL. */
+  private async cleanupFor(
+    id: string,
+    snapshot: LedgerSnapshot | undefined,
+  ): Promise<string[]> {
+    try {
+      const snap =
+        snapshot ??
+        (await snapshotLedger({ events: this.sink.for(id), rail: this.rail }))
+          .snapshot;
+      return await cleanupRefunds(this.rail, this.sink, id, snap);
+    } catch (e) {
+      safely("cleanup event", () =>
+        this.sink.append({
+          scenarioRunId: id,
+          type: "cleanup.error",
+          payload: { message: errorText(e) },
+        }),
+      );
+      return [errorText(e)];
+    }
+  }
+
+  private async runOne(
+    { sr, scenario }: Job,
+    cleanup: boolean,
+    judges: Promise<void>[],
+  ) {
     const { db } = this.o;
     const id = sr.id;
     updateScenarioRun(db, id, {
@@ -284,10 +390,11 @@ export class Orchestrator {
       },
     });
     let patch: Partial<ScenarioRun>;
+    let audit: ScenarioAudit | undefined;
     try {
       const factory = getProfile(sr.profile_id);
       if (!factory) throw new Error(`unknown profile ${sr.profile_id}`);
-      const { audit, stats, error } = await runScenario({
+      const result = await runScenario({
         scenario,
         agent: factory(scenario, {
           log: (payload) =>
@@ -304,6 +411,8 @@ export class Orchestrator {
         app: this.o.app,
         db,
       });
+      const { stats, error } = result;
+      audit = result.audit;
       patch = {
         status: error === undefined ? "done" : "error",
         verdict: audit.verdict,
@@ -320,23 +429,20 @@ export class Orchestrator {
         ledger_completeness: audit.snapshot.ledger_completeness ?? "ok",
         error: error ?? null,
       };
-      try {
-        if (cleanup)
-          await cleanupRefunds(this.rail, this.sink, id, audit.snapshot);
-      } catch (e) {
-        // The verdict stands; leftover captured money must be visible.
+    } catch (e) {
+      patch = { status: "error", verdict: "ERROR", error: errorText(e) };
+    }
+    if (cleanup) {
+      const errors = await this.cleanupFor(id, audit?.snapshot);
+      // The verdict stands; leftover captured money must be visible.
+      if (errors.length > 0)
         patch = {
           ...patch,
           status: "error",
-          error: `cleanup refund failed: ${e instanceof Error ? e.message : String(e)}`,
+          error: [patch.error, `cleanup refund failed: ${errors.join("; ")}`]
+            .filter(Boolean)
+            .join("; "),
         };
-      }
-    } catch (e) {
-      patch = {
-        status: "error",
-        verdict: "ERROR",
-        error: e instanceof Error ? e.message : String(e),
-      };
     }
     patch.finished_at = new Date().toISOString();
     updateScenarioRun(db, id, patch);
@@ -353,6 +459,56 @@ export class Orchestrator {
         ...(patch.error && { error: patch.error }),
       },
     });
+    if (audit && this.o.judge && JUDGED.has(audit.verdict))
+      judges.push(this.explain(sr.run_id, id, scenario, audit, this.o.judge));
+  }
+
+  /** Never throws and never touches the verdict; a failure is stored as `failed`. */
+  private async explain(
+    runId: string,
+    id: string,
+    scenario: Scenario,
+    audit: ScenarioAudit,
+    judge: { llm: LLMClient; model: string },
+  ): Promise<void> {
+    this.judging.add(id);
+    let status: ExplanationResponse["status"] = "failed";
+    try {
+      const explanation = await explainScenarioRun({
+        llm: judge.llm,
+        model: judge.model,
+        input: {
+          scenario: {
+            title: scenario.title,
+            instruction: scenario.instruction,
+          },
+          policy: scenario.policy,
+          verdict: audit.verdict,
+          failed: audit.results
+            .filter((r) => !r.passed)
+            .map((r) => ({
+              type: r.type,
+              expected: r.expected,
+              actual: r.actual,
+              evidence: r.evidence,
+            })),
+          ledger: audit.snapshot,
+          events: this.sink.for(id),
+        },
+      });
+      saveExplanation(this.o.db, id, explanation, judge.model);
+      if (explanation) status = "ready";
+    } catch (e) {
+      console.error(`judge failed for ${id}: ${errorText(e)}`);
+    } finally {
+      this.judging.delete(id);
+    }
+    safely("publish", () =>
+      this.o.hub.publish(runId, "judge.ready", {
+        scenario_run_id: id,
+        status,
+      }),
+    );
   }
 }
 

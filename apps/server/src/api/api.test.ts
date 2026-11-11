@@ -1,9 +1,10 @@
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ApiError,
   CreateRunResponse,
+  ExplanationResponse,
   RunDetail,
   ScenarioRunDetail,
 } from "@crash-test/shared";
@@ -14,6 +15,8 @@ import { openDb } from "../db/db.js";
 import { getRun, insertRun, insertScenarioRun } from "../db/runsRepo.js";
 import { limiter } from "../engine/orchestrator.js";
 import { registerProfile } from "../engine/profiles.js";
+import { saveExplanation } from "../judge/explain.js";
+import { recordGold } from "../recordGold.js";
 import { LiveGate } from "./liveGate.js";
 import { exportRun, loadFixtures, maskEmails, writeFixture } from "./replay.js";
 
@@ -131,6 +134,7 @@ describe("runs API (MockRail, oracle profile)", () => {
       url: `/api/runs/${runId}/events`,
     });
     expect(res.headers["content-type"]).toContain("text/event-stream");
+    expect(res.headers["x-accel-buffering"]).toBe("no");
     const all = frames(res.body);
     expect(all.map((f) => f.id)).toEqual(all.map((_, i) => i + 1));
     expect(all[0]?.event).toBe("run.started");
@@ -241,6 +245,57 @@ describe("runs API (MockRail, oracle profile)", () => {
     const health = await s.app.inject({ method: "GET", url: "/api/health" });
     expect(health.json()).toMatchObject({ status: "ok", rail: "mock" });
   });
+
+  it("caches the rail preflight for /api/health", async () => {
+    const s = await server();
+    let calls = 0;
+    const preflight = s.orchestrator.rail.preflight.bind(s.orchestrator.rail);
+    s.orchestrator.rail.preflight = () => (calls++, preflight());
+    for (let i = 0; i < 3; i++)
+      await s.app.inject({ method: "GET", url: "/api/health" });
+    expect(calls).toBe(1);
+  });
+
+  it("dedupes ids, validates before the cap, limits the run list", async () => {
+    const s = await server({ LIVE_RUNS_PER_IP_PER_DAY: "1" });
+    for (const payload of [
+      { profile_ids: ["oracle"], scenario_ids: ["S99"] },
+      { profile_ids: ["oracle"], suite_id: "nope" },
+    ]) {
+      const bad = await s.app.inject({
+        method: "POST",
+        url: "/api/runs",
+        payload,
+      });
+      expect(bad.statusCode).toBe(400);
+    }
+    const runId = await startRun(s, {
+      profile_ids: ["oracle", "oracle"],
+      scenario_ids: ["S01", "S01"],
+    });
+    const detail = await pollDone(s, runId);
+    expect(detail.scenario_runs).toHaveLength(1);
+    const runs = await s.app.inject({
+      method: "GET",
+      url: "/api/runs?limit=0",
+    });
+    expect(runs.json<{ runs: unknown[] }>().runs).toHaveLength(1);
+
+    const sr = detail.scenario_runs[0];
+    const ex = await s.app.inject({
+      method: "GET",
+      url: `/api/scenario-runs/${sr?.id}/explanation`,
+    });
+    expect(ExplanationResponse.parse(ex.json())).toEqual({
+      status: "none",
+      explanation: null,
+    });
+    const missing = await s.app.inject({
+      method: "GET",
+      url: "/api/scenario-runs/nope/explanation",
+    });
+    expect(missing.statusCode).toBe(404);
+  });
 });
 
 describe("live gate", () => {
@@ -345,9 +400,24 @@ describe("gold-run fixtures", () => {
       profile_ids: ["saboteur"],
       scenario_ids: ["S06"],
     });
-    await pollDone(s, runId);
+    const { scenario_runs } = await pollDone(s, runId);
+    const srId = scenario_runs[0]?.id ?? "";
+    saveExplanation(
+      s.db,
+      srId,
+      {
+        root_cause: "no_idempotency",
+        offending_step: null,
+        explanation: "Retried confirm after the timeout without a key.",
+        evidence: ["CAP-1"],
+        confidence: "high",
+      },
+      "judge-model",
+    );
     const dir = mkdtempSync(join(tmpdir(), "gold-"));
-    writeFixture(s.db, runId, dir);
+    expect(writeFixture(s.db, runId, dir, "naive-v1")).toBe(
+      join(dir, "naive-v1.json"),
+    );
 
     const db = openDb(":memory:");
     expect(loadFixtures(db, dir)).toBe(1);
@@ -357,6 +427,22 @@ describe("gold-run fixtures", () => {
     expect(loaded.run).toMatchObject({ source: "fixture", mode: "replay" });
     expect({ ...loaded, run: original.run }).toEqual(original);
     expect(original.scenario_runs[0]?.verdict).toBe("UNSAFE");
+    expect(original.explanations).toHaveLength(1);
+    const replay = await server({}, db);
+    const ex = await replay.app.inject({
+      method: "GET",
+      url: `/api/scenario-runs/${srId}/explanation`,
+    });
+    expect(ExplanationResponse.parse(ex.json())).toMatchObject({
+      status: "ready",
+      explanation: { root_cause: "no_idempotency", evidence: ["CAP-1"] },
+    });
+  });
+
+  it("record-gold refuses the mock rail and writes nothing", async () => {
+    const dir = join(mkdtempSync(join(tmpdir(), "gold-")), "out");
+    expect(await recordGold(loadConfig({}), [], dir)).toBe(2);
+    expect(existsSync(dir)).toBe(false);
   });
 
   it("masks payer emails", () => {

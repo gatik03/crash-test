@@ -17,10 +17,14 @@ export function useRunStream(runId: string, active: boolean): void {
     };
     es.addEventListener("scenario.started", refresh);
     es.addEventListener("scenario.finished", refresh);
+    es.addEventListener("judge.ready", () => {
+      void qc.invalidateQueries({ queryKey: ["explanation"] });
+    });
     const stop = () => {
       es.close();
       refresh();
       void qc.invalidateQueries({ queryKey: ["runs"] });
+      void qc.invalidateQueries({ queryKey: ["explanation"] });
     };
     es.addEventListener("run.finished", stop);
     // The server closes replayed streams; don't let EventSource reconnect in a loop. useRun polls as a fallback.

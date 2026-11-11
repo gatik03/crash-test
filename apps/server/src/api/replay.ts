@@ -106,9 +106,16 @@ export function exportRun(db: Db, runId: string): GoldRunFixture {
   return GoldRunFixture.parse(JSON.parse(maskEmails(JSON.stringify(fixture))));
 }
 
-export function writeFixture(db: Db, runId: string, dir: string): string {
+export function writeFixture(
+  db: Db,
+  runId: string,
+  dir: string,
+  name = runId,
+): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(name))
+    throw new Error("fixture name: letters, digits, _ and - only");
   mkdirSync(dir, { recursive: true });
-  const path = join(dir, `${runId}.json`);
+  const path = join(dir, `${name}.json`);
   writeFileSync(path, `${JSON.stringify(exportRun(db, runId), null, 2)}\n`);
   return path;
 }

@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type {
   ApiHealthResponse,
   CreateRunResponse,
+  ExplanationResponse,
   ProfileListResponse,
   RunDetail,
   RunListResponse,
@@ -29,6 +30,7 @@ import {
   SUITE_VERSION,
 } from "../engine/orchestrator.js";
 import { listProfiles } from "../engine/profiles.js";
+import type { Rail } from "../rails/Rail.js";
 import type { LiveGate } from "./liveGate.js";
 import { sseRoutes, type RunEventHub } from "./sse.js";
 
@@ -82,8 +84,16 @@ export async function apiRoutes(app: FastifyInstance, deps: ApiDeps) {
     fail(reply, 404, "not_found", "no such endpoint"),
   );
 
+  // Public hits must not reach PayPal every time: one preflight per minute, shared by concurrent requests.
+  let preflight: { at: number; health: ReturnType<Rail["preflight"]> } | null =
+    null;
   app.get("/health", async (): Promise<ApiHealthResponse> => {
-    const health = await orchestrator.rail.preflight();
+    if (!preflight || Date.now() - preflight.at > 60_000) {
+      const health = orchestrator.rail.preflight();
+      preflight = { at: Date.now(), health };
+      health.catch(() => (preflight = null));
+    }
+    const health = await preflight.health;
     return {
       status: health.ok ? "ok" : "degraded",
       rail: orchestrator.rail.kind,
@@ -126,10 +136,19 @@ export async function apiRoutes(app: FastifyInstance, deps: ApiDeps) {
     const parsed = CreateRunRequest.safeParse(req.body);
     if (!parsed.success)
       return fail(reply, 400, "invalid_request", parsed.error.message);
+    // Validate ids and dedupe before a cap slot is taken; the deduped request is what runs.
+    let plan: ReturnType<Orchestrator["plan"]>;
+    try {
+      plan = orchestrator.plan(parsed.data);
+    } catch (e) {
+      if (e instanceof OrchestratorError)
+        return fail(reply, 400, e.code, e.message);
+      throw e;
+    }
     const admin = isAdmin(config, req);
     if (!config.ALLOW_LIVE_RUNS && !admin)
       return fail(reply, 403, "live_disabled", "live runs are disabled");
-    if (config.DEMO_MODE === "public" && parsed.data.trials > 1 && !admin)
+    if (config.DEMO_MODE === "public" && plan.req.trials > 1 && !admin)
       return fail(
         reply,
         403,
@@ -146,7 +165,7 @@ export async function apiRoutes(app: FastifyInstance, deps: ApiDeps) {
       });
     try {
       const body: CreateRunResponse = {
-        run_id: orchestrator.createRun(parsed.data),
+        run_id: orchestrator.createRun(plan.req),
       };
       return reply.code(202).send(body);
     } catch (e) {
@@ -156,9 +175,14 @@ export async function apiRoutes(app: FastifyInstance, deps: ApiDeps) {
     }
   });
 
-  app.get("/runs", async (): Promise<RunListResponse> => ({
-    runs: listRuns(db),
-  }));
+  app.get<{ Querystring: { limit?: string } }>(
+    "/runs",
+    async (req): Promise<RunListResponse> => {
+      const n = Number(req.query.limit ?? 50);
+      const limit = Number.isInteger(n) ? Math.min(Math.max(n, 1), 200) : 50;
+      return { runs: listRuns(db, limit) };
+    },
+  );
 
   app.get<{ Params: { id: string } }>("/runs/:id", async (req, reply) => {
     const run = getRun(db, req.params.id);
@@ -186,6 +210,16 @@ export async function apiRoutes(app: FastifyInstance, deps: ApiDeps) {
         assertions: listAssertionResults(db, sr.id),
         explanation: getExplanation(db, sr.id),
       };
+      return body;
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/scenario-runs/:id/explanation",
+    async (req, reply) => {
+      if (!getScenarioRun(db, req.params.id))
+        return fail(reply, 404, "not_found", "scenario run not found");
+      const body: ExplanationResponse = orchestrator.explanation(req.params.id);
       return body;
     },
   );

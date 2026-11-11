@@ -20,6 +20,7 @@
     "check:sandbox-only": "node scripts/check-sandbox-only.ts",
     "spike:vault": "node --env-file=.env scripts/vault-wallet.ts",
     "spike": "node --env-file=.env scripts/spike-paypal.ts",
+    "record:gold": "pnpm cli record-gold",
     "cli": "pnpm --filter @crash-test/server exec tsx --env-file=../../.env src/cli.ts"
   },
   "devDependencies": {

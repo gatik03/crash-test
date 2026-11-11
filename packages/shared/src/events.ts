@@ -47,6 +47,10 @@ export const AppEvent = z.discriminatedUnion("type", [
     "cleanup.refund",
     z.object({ request: RefundRequest, result: RefundResult }),
   ),
+  event(
+    "cleanup.error",
+    z.object({ captureId: z.string().optional(), message: z.string() }),
+  ),
   event("run.started", open),
   event("scenario.started", open),
   event("agent.step", open),

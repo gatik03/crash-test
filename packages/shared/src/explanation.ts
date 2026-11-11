@@ -44,3 +44,10 @@ export const Explanation = z.object({
   confidence: z.enum(["low", "medium", "high"]),
 });
 export type Explanation = z.infer<typeof Explanation>;
+
+/** `GET /api/scenario-runs/:id/explanation`. `none`: the judge did not run (verdict, or no LLM key). */
+export const ExplanationResponse = z.object({
+  status: z.enum(["ready", "pending", "failed", "none"]),
+  explanation: Explanation.nullable(),
+});
+export type ExplanationResponse = z.infer<typeof ExplanationResponse>;

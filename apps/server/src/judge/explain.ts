@@ -1,4 +1,4 @@
-import { Explanation } from "@crash-test/shared";
+import { Explanation, type ExplanationResponse } from "@crash-test/shared";
 import type { Db } from "../db/db.js";
 import type { ChatMessage, LLMClient } from "../agents/llm/LLMClient.js";
 import { buildJudgePrompt, citable, type JudgeInput } from "./prompts.js";
@@ -77,10 +77,11 @@ export async function explainScenarioRun({
   return null;
 }
 
+/** Stores the judge's result; null records a failed judge (status `failed`). */
 export function saveExplanation(
   db: Db,
   scenarioRunId: string,
-  explanation: Explanation,
+  explanation: Explanation | null,
   model: string,
 ): void {
   db.prepare(
@@ -93,16 +94,32 @@ export function saveExplanation(
   );
 }
 
-export function getExplanation(
+/** `ready` with a valid stored explanation, `failed` for any other stored row, `none` without one. */
+export function explanationStatus(
   db: Db,
   scenarioRunId: string,
-): Explanation | null {
+): ExplanationResponse {
   const row = db
     .prepare<[string], { json: string | null }>(
       "SELECT json FROM explanations WHERE scenario_run_id = ?",
     )
     .get(scenarioRunId);
-  if (!row?.json) return null;
-  const parsed = Explanation.safeParse(JSON.parse(row.json));
-  return parsed.success ? parsed.data : null;
+  if (!row) return { status: "none", explanation: null };
+  let json: unknown = null;
+  try {
+    json = JSON.parse(row.json ?? "null");
+  } catch {
+    // Unreadable row: failed.
+  }
+  const parsed = Explanation.safeParse(json);
+  return parsed.success
+    ? { status: "ready", explanation: parsed.data }
+    : { status: "failed", explanation: null };
+}
+
+export function getExplanation(
+  db: Db,
+  scenarioRunId: string,
+): Explanation | null {
+  return explanationStatus(db, scenarioRunId).explanation;
 }

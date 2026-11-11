@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useScenarioRun } from "../api/queries";
-import { formatValue } from "../lib/money";
 import { chipFor } from "../lib/verdict";
 import { AssertionList } from "./AssertionList";
 import { CopyId } from "./CopyId";
+import { ExplanationCard } from "./ExplanationCard";
 import { MoneyPanel } from "./MoneyPanel";
 import { TranscriptView } from "./TranscriptView";
 import { VerdictChip } from "./VerdictChip";
@@ -96,15 +96,7 @@ export function ScenarioDetail({
         {data && tab === "Assertions" && (
           <AssertionList assertions={data.assertions} />
         )}
-        {data &&
-          tab === "Explanation" &&
-          (data.explanation == null ? (
-            <p className="text-sm text-muted">Judge explanation pending.</p>
-          ) : (
-            <pre className="whitespace-pre-wrap break-words text-sm">
-              {formatValue(data.explanation)}
-            </pre>
-          ))}
+        {data && tab === "Explanation" && <ExplanationCard id={id} />}
       </div>
     </section>
   );

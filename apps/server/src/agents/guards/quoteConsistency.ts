@@ -7,6 +7,7 @@ import {
   usd,
   type Guard,
 } from "./types.js";
+import { fence } from "./untrustedTextFence.js";
 
 /** After create_quote, notes when the total differs from the listed prices of the items. */
 export const quoteConsistency: Guard = async (call, next, { history }) => {
@@ -31,7 +32,8 @@ export const quoteConsistency: Guard = async (call, next, { history }) => {
         .map((f) => {
           const o = (f ?? {}) as Record<string, unknown>;
           const amount = cents(o["amount"]);
-          return `${String(o["label"])} ${amount === undefined ? "?" : usd(amount)}`;
+          // The label is merchant text: fenced, since guard notes are not walked by the fence.
+          return `${fence(String(o["label"]))} ${amount === undefined ? "?" : usd(amount)}`;
         })
         .join(", ")
     : "";

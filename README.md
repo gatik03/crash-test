@@ -66,15 +66,14 @@ Needs Node 22+ and pnpm (`corepack enable`). The default rail is `mock`: an in-m
 pnpm install
 cp .env.example .env
 pnpm build
-set -a; . ./.env; set +a   # the server does not read .env itself; the CLI does
-pnpm start                  # http://localhost:3000
+pnpm start                  # http://localhost:3000; reads the repo-root .env if present
 ```
 
 Open <http://localhost:3000>. Without an LLM key only the scripted `oracle` (always safe) and `saboteur` (always makes the intended mistake) profiles are offered. Start a run from **New run**, or use the CLI below.
 
 **Replay mode.** On boot the server loads every gold-run fixture in `fixtures/gold-runs/*.json` (recorded real-sandbox runs, e-mails masked) and lists it on the dashboard as `REPLAY`, which needs no keys. The fixture format is `GoldRunFixture` in `packages/shared/src/api.ts`. At the time of writing the folder has no committed fixtures yet.
 
-For development with watch mode use `pnpm dev` (same environment variables as above).
+For development with watch mode use `pnpm dev`. Both `pnpm start` and `pnpm dev` load the repo-root `.env` when it exists (variables already set in the shell win) and run without one.
 
 ## Run it with your own keys
 
@@ -135,6 +134,16 @@ pnpm cli run --profile oracle --scenario S01,S07 --trials 1
 
 It prints, per scenario, the verdict, assertion results, the PayPal ids of orders, captures and refunds, any cleanup refunds, and what is still captured afterwards. Exit code is 1 if any scenario errored.
 
+Recording gold runs (needs `PAYPAL_RAIL=paypal-sandbox` and an LLM key; it refuses the mock rail):
+
+```sh
+pnpm record:gold --profiles naive,prompted,hardened --trials 1 [--scenarios S01,S06] [--model <agent model>] [--name <file name>]
+```
+
+It runs core-v1 on the real sandbox, waits for the judge explanations, and writes `fixtures/gold-runs/<name>.json` (default name: the run id) with payer e-mails masked.
+
+When an LLM key and `LLM_MODEL_JUDGE` are set, every `UNSAFE` or `OVER_REFUSAL` scenario run gets a judge explanation after its verdict is stored (`GET /api/scenario-runs/:id/explanation`, the Explanation tab). The judge never changes a verdict; a failed judge shows as `failed`, a run without a key as `none`.
+
 ## Replay versus live
 
 - **Replay:** open a recorded run from the dashboard; nothing is executed, no keys or PayPal access are needed.
@@ -163,7 +172,7 @@ The **oracle/saboteur gate** (`apps/server/src/oracles/gate.test.ts`) runs a scr
 - **Gemini returns 404 "no longer available to new users":** the 2.5 models (`gemini-2.5-flash`, `-flash-lite`) are not callable for new keys even though `/models` lists them. Use the defaults (`gemini-3.5-flash`, `gemini-3.1-flash-lite`) or run `pnpm cli llm-check --models ...` to find one that works.
 - **Gemini returns 503 "high demand":** transient; the client retries 3 times with backoff. Re-run, or switch model.
 - **Rate limits (429):** lower `LLM_MAX_RPM` to your key's limit; runs get slower rather than failing, and queue time is not counted against an agent's time budget.
-- **`.env` is ignored or "Invalid configuration":** `.env` lives at the repo root. The CLI and `pnpm spike*` load it automatically; `pnpm start` and `pnpm dev` do not, so export it first (`set -a; . ./.env; set +a`). Empty values (as in the copied `.env.example`) count as unset. With `PAYPAL_RAIL=paypal-sandbox` the client id, secret and `WALLET_VAULT_ID` are required.
+- **`.env` is ignored or "Invalid configuration":** `.env` lives at the repo root. The server (`pnpm start`, `pnpm dev`), the CLI and `pnpm spike*` load it automatically; variables already set in the shell take precedence. Empty values (as in the copied `.env.example`) count as unset. With `PAYPAL_RAIL=paypal-sandbox` the client id, secret and `WALLET_VAULT_ID` are required.
 - **No `naive`/`hardened` profile in the UI:** set `LLM_API_KEY` and `LLM_PROVIDER` (and `LLM_MODEL_AGENT` for non-Gemini providers).
 
 ## License

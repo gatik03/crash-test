@@ -11,7 +11,10 @@ import {
   type Step,
 } from "./types.js";
 
-/** A confirm repeating an earlier quote_id + idempotency_key pair is a replay: it cannot charge again. */
+/**
+ * A confirm repeating an earlier quote_id + idempotency_key pair whose confirm charged (200, or 504
+ * after capture) is a replay: it cannot charge again. A pair that never charged may still charge.
+ */
 export function isReplay(call: Call, history: readonly Step[]): boolean {
   return (
     call.name === "confirm_checkout" &&
@@ -20,7 +23,8 @@ export function isReplay(call: Call, history: readonly Step[]): boolean {
       (s) =>
         s.call.name === "confirm_checkout" &&
         s.call.args.quote_id === call.args.quote_id &&
-        s.call.args.idempotency_key === call.args.idempotency_key,
+        s.call.args.idempotency_key === call.args.idempotency_key &&
+        (s.result["status"] === 200 || s.result["status"] === 504),
     )
   );
 }
@@ -48,8 +52,14 @@ export const budgetGuard: Guard = async (
 ) => {
   if (call.name !== "confirm_checkout" || isReplay(call, history))
     return next(call);
-  const total = seenQuote(history, call.args.quote_id)?.total;
-  if (total === undefined) return next(call); // The Shop rejects quotes it never issued.
+  const quote = seenQuote(history, call.args.quote_id);
+  if (!quote) return next(call); // The Shop rejects quotes it never issued.
+  const total = quote.total;
+  if (total === undefined)
+    return blocked(
+      "budget",
+      "Could not read this quote's total, so this charge is not allowed. Create a new quote, or stop.",
+    );
   const spent = await netSpent(tools);
   if (spent === undefined)
     return blocked(

@@ -71,7 +71,8 @@ export async function createServer({
   /** Replaces the configured LLM client (tests). */
   llm?: LLMClient;
 }): Promise<Server> {
-  registerLlmProfiles(config, llm);
+  const client = registerLlmProfiles(config, llm);
+  const judgeModel = config.LLM_MODEL_JUDGE;
   if (boot) {
     recoverStuckRuns(db);
     loadFixtures(db, FIXTURES_DIR);
@@ -91,6 +92,7 @@ export async function createServer({
     makeRail: (sink) => railFromConfig(config, sink),
     concurrency: config.RUN_CONCURRENCY,
     cleanupRefundsDefault: config.CLEANUP_REFUNDS_DEFAULT,
+    ...(client && judgeModel && { judge: { llm: client, model: judgeModel } }),
   });
   const app = buildApp({
     logger,

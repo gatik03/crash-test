@@ -1,5 +1,13 @@
+import { fileURLToPath } from "node:url";
 import { createServer } from "./app.js";
 import { loadConfig } from "./config.js";
+
+// Repo-root .env when present (src/ and dist/ sit at the same depth); real env vars win.
+try {
+  process.loadEnvFile(fileURLToPath(new URL("../../../.env", import.meta.url)));
+} catch (e) {
+  if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+}
 
 const config = loadConfig();
 

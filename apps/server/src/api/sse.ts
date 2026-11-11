@@ -71,6 +71,8 @@ export function sseRoutes(
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
         connection: "keep-alive",
+        // Proxies (nginx, Render) must not buffer the stream.
+        "x-accel-buffering": "no",
       });
 
       if (!hub.has(run.id)) {
@@ -92,16 +94,25 @@ export function sseRoutes(
       }
 
       let ended = false;
+      let heartbeat: NodeJS.Timeout | undefined;
       const unsubscribe = hub.subscribe(run.id, afterId, (e) => {
         if (ended) return;
         res.write(frame(e));
         if (e.type === "run.finished") {
           ended = true;
+          clearInterval(heartbeat);
           res.end();
         }
       });
       if (ended) unsubscribe();
-      else req.raw.on("close", unsubscribe);
+      else {
+        // An SSE comment keeps idle proxies from closing a long run's stream.
+        heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 15_000);
+        req.raw.on("close", () => {
+          clearInterval(heartbeat);
+          unsubscribe();
+        });
+      }
     },
   );
 }

@@ -1,5 +1,6 @@
 import {
   ApiHealthResponse,
+  ExplanationResponse,
   ProfileListResponse,
   RunDetail,
   RunListResponse,
@@ -52,6 +53,16 @@ export const useScenarioRun = (id: string | null) =>
     queryFn: () =>
       getJson(`/api/scenario-runs/${enc(id ?? "")}`, ScenarioRunDetail),
     enabled: id !== null,
+  });
+
+/** Refetched on `judge.ready` (useRunStream); polls while pending as a fallback. */
+export const useExplanation = (id: string) =>
+  useQuery({
+    queryKey: ["explanation", id],
+    queryFn: () =>
+      getJson(`/api/scenario-runs/${enc(id)}/explanation`, ExplanationResponse),
+    refetchInterval: (q) =>
+      q.state.data?.status === "pending" ? 5_000 : false,
   });
 
 export const useProfiles = () =>
