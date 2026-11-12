@@ -3,3 +3,5 @@ pnpm-lock.yaml
 PRD.md
 ARCHITECTURE.md
 AGENTS.md
+# recorded run data, written by pnpm record:gold
+fixtures/gold-runs/*.json
